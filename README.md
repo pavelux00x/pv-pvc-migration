@@ -92,6 +92,8 @@ echo "Patching PV $pv to Retain policy..."
 oc patch pv "$pv" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
 oc get pv "$pv" -o json | jq 'del(.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.selfLink,.metadata.managedFields,.metadata.annotations["pv.kubernetes.io/bound-by-controller"],.spec.claimRef,.status)' | oc create -f - --dry-run=client -o yaml > $DIR/pv/$pv.yaml
 oc get pvc "$pvc" -n $NS -o json | jq 'del(.metadata.uid,.metadata.creationTimestamp,.metadata.annotations,.status,.metadata.resourceVersion)' | oc create -f - --dry-run=client -o yaml > $DIR/pvc/$pvc.yaml
+[[ ! -f $DIR/pv/$pv.yaml ]] && { echo "PV configuration missing , aborting"; exit 1; }
+[[ ! -f $DIR/pvc/$pvc.yaml ]] && { echo "PVC configuration missing, aborting"; exit 1; }
 oc delete pvc "$pvc" -n $NS --wait=true
 oc delete pv "$pv" --wait=true
 done <<< "$PVS"
