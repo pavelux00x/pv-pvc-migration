@@ -48,7 +48,7 @@ spec:
       server: ${OLD_NFS}
       path: /oc/exports/${NS}
 EOF
-oc wait --for=condition=Ready -n $NS pod/rsync-$NS && oc exec rsync-$NS -n $NS -- rsync -WAsHx /old-nfs/ /new-nfs/
+oc wait --for=condition=Ready -n $NS pod/rsync-$NS --timeout=120s && oc exec rsync-$NS -n $NS -- rsync -WAsHx /old-nfs/ /new-nfs/ || { echo "Check your rsync pod"; exit 1; }
 }
 }
 
@@ -60,7 +60,7 @@ oc wait --for=condition=Ready -n $NS pod/rsync-$NS && oc exec rsync-$NS -n $NS -
 . /var/tmp/$(who am i |awk '{print $1}')-migration-vars
 mkdir -p $DIR/pv $DIR/pvc
 for TYPE in {job,dc,deploy,sts,hpa,cronjob}; do
-RSC_COUNT=$(oc get $TYPE --no-headers 2>/dev/null | wc -l)
+RSC_COUNT=$(oc get $TYPE -n $NS --no-headers 2>/dev/null | wc -l)
 if [ "$RSC_COUNT" -gt 0 ];then
 oc get $TYPE -n $NS -o json | jq  '.items[] | del(.metadata.uid,.metadata.creationTimestamp,.metadata.resourceVersion,.status)' | oc create -n $NS -f - --dry-run=client -o yaml > $DIR/$TYPE.yaml
 fi
@@ -70,11 +70,12 @@ if [ "$NKD_PODS" -gt 0 ];then
 oc get pods -n $NS -l "type!=$POD_LABEL" -o json | jq '.items[] | select(.metadata.ownerReferences == null) | del(.metadata.uid, .metadata.resourceVersion, .metadata.creationTimestamp, .metadata.selfLink, .metadata.managedFields, .metadata.annotations["k8s.v1.cni.cncf.io/network-status"], .metadata.annotations["k8s.ovn.org/pod-networks"], .spec.nodeName, .status)' | oc create -f - --dry-run=client -o yaml > "$DIR/naked-pods.yaml"
 fi
 oc scale dc,deploy,sts --replicas=0 --all -n $NS
-oc get pod rsync-$NS -n $NS &>/dev/null && oc exec rsync-${NS} -n ${NS} -- rsync -WAsHx --delete /old-nfs/ /new-nfs/
-oc delete hpa --all -n $NS
 oc get cronjob -n $NS -o name | xargs -I {} oc patch {} -p '{"spec" : {"suspend" : true}}' -n $NS # xargs -n1 oc patch ???
+oc delete hpa --all -n $NS
 oc delete jobs --all -n $NS
 test -f $DIR/naked-pods.yaml && oc delete -f $DIR/naked-pods.yaml --grace-period=$GRACE_PERIOD
+oc wait --for=delete pod -l "type!=$POD_LABEL" --timeout=180s -n $NS 2>/dev/null || true
+oc get pod rsync-$NS -n $NS &>/dev/null && { oc exec rsync-${NS} -n ${NS} -- rsync -WAsHx --delete /old-nfs/ /new-nfs/ }
 (oc wait --for=delete pod -l "type!=$POD_LABEL" --timeout=120s -n $NS && echo "You can continue") || echo "Check your pods"
 }
 ```
@@ -90,7 +91,7 @@ while read -r pvc pv;do
 echo "Patching PV $pv to Retain policy..."
 oc patch pv "$pv" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
 oc get pv "$pv" -o json | jq 'del(.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.selfLink,.metadata.managedFields,.metadata.annotations["pv.kubernetes.io/bound-by-controller"],.spec.claimRef,.status)' | oc create -f - --dry-run=client -o yaml > $DIR/pv/$pv.yaml
-oc get pvc "$pvc" -n $NS -o json | jq 'del(.metadata.uid,.metadata.creationTimestamp,.metadata.annotations,.status,.metadata.resourceVersion)' | oc create -f - --dry-run=client -o yaml > $DIR/pvc/$pv.yaml
+oc get pvc "$pvc" -n $NS -o json | jq 'del(.metadata.uid,.metadata.creationTimestamp,.metadata.annotations,.status,.metadata.resourceVersion)' | oc create -f - --dry-run=client -o yaml > $DIR/pvc/$pvc.yaml
 oc delete pvc "$pvc" -n $NS --wait=true
 oc delete pv "$pv" --wait=true
 done <<< "$PVS"
