@@ -48,7 +48,7 @@ spec:
       server: ${OLD_NFS}
       path: /oc/exports/${NS}
 EOF
-oc wait --for=condition=Ready -n $NS pod/rsync-$NS && oc exec rsync-$NS -n $NS -- rsync -avP /old-nfs/ /new-nfs/
+oc wait --for=condition=Ready -n $NS pod/rsync-$NS && oc exec rsync-$NS -n $NS -- rsync -WAsHx /old-nfs/ /new-nfs/
 }
 }
 
@@ -70,7 +70,7 @@ if [ "$NKD_PODS" -gt 0 ];then
 oc get pods -n $NS -l "type!=$POD_LABEL" -o json | jq '.items[] | select(.metadata.ownerReferences == null) | del(.metadata.uid, .metadata.resourceVersion, .metadata.creationTimestamp, .metadata.selfLink, .metadata.managedFields, .metadata.annotations["k8s.v1.cni.cncf.io/network-status"], .metadata.annotations["k8s.ovn.org/pod-networks"], .spec.nodeName, .status)' | oc create -f - --dry-run=client -o yaml > "$DIR/naked-pods.yaml"
 fi
 oc scale dc,deploy,sts --replicas=0 --all -n $NS
-oc exec rsync-${NS} -n ${NS} -- rsync -avP --delete /old-nfs/ /new-nfs/
+oc get pod rsync-$NS -n $NS &>/dev/null && oc exec rsync-${NS} -n ${NS} -- rsync -WAsHx --delete /old-nfs/ /new-nfs/
 oc delete hpa --all -n $NS
 oc get cronjob -n $NS -o name | xargs -I {} oc patch {} -p '{"spec" : {"suspend" : true}}' -n $NS # xargs -n1 oc patch ???
 oc delete jobs --all -n $NS
